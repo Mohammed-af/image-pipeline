@@ -26,6 +26,7 @@ git clone https://github.com/Mohammed-af/image-pipeline.git
 python3 -m venv pipeline_env
 
 # Activate environment
+source pipeline_env/bin/activate
 # Linux/macOS:
 source pipeline_env/bin/activate
 # Windows:
