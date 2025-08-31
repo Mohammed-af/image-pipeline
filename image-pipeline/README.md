@@ -38,13 +38,13 @@ pip install huggingface_hub requests pillow pymilvus
 
 
 
-3- Download Models
-# Create directories
+# Download Models
+//Create directories
 mkdir -p tritonserver/model_repository/{SigLIP_image/1,SigLIP_text/1}
 
 pip install huggingface_hub
 
-# Download models
+//Download models
 hf download AbdullahMubark/siglib-models \
   --include "SigLIP_image/1/model.onnx" "SigLIP_text/1/model.onnx" \
   --local-dir ./tritonserver/model_repository
@@ -57,7 +57,7 @@ rm -rf ./temp_models
 
 
 
-4- Configure Models
+# Configure Models
 
 #Create configuration files for GPU mode:
 #For CPU mode, replace KIND_GPU with KIND_CPU and remove the gpus: [0] line.
@@ -107,12 +107,12 @@ instance_group [{
 EOF
 
 
-5- Start Model Services
+# Start Model Services
 
-# Create network for model services
+//Create network for model services
 docker network create ml-network
 
-# Start Triton Inference Server (GPU)
+//Start Triton Inference Server (GPU)
 docker run -d --name triton-server \
   --gpus=1 \
   --network ml-network \
@@ -124,7 +124,7 @@ docker run -d --name triton-server \
   --model-control-mode=poll \
   --repository-poll-secs=5
 
-# For CPU mode, remove --gpus=1
+//For CPU mode, remove --gpus=1
 
 # Build FastAPI service
 cd model-serving
@@ -142,17 +142,17 @@ cd ..
 
 
 
-7- Start Pipeline Infrastructure
-# Start all services
+# Start Pipeline Infrastructure
+//Start all services
 cd image-pipeline
 docker-compose up -d
 
-# Check service status
+//Check service status
 docker ps
 
 
 
-8- Process Images
+#Process Images
 # Run the Automation
 docker-compose run --rm python-producer
 
@@ -163,12 +163,14 @@ docker-compose run --rm python-producer
 # Connect to PostgreSQL and see everything
 docker exec -it postgres psql -U postgres -d imagedb
 
-# Once connected, run these queries:
+//Once connected, run these queries:
+
 \x on  -- Enable expanded display
 SELECT * FROM image_records ORDER BY processed_at DESC;
 \q     -- Exit
 
-# Or run directly:
+//Or run directly:
+
 docker exec postgres psql -U postgres -d imagedb -c "
 SELECT 
     filename,
