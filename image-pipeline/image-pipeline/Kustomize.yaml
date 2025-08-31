@@ -1,0 +1,457 @@
+
+# Directory Structure:
+# k8s/
+# ├── base/
+# │   ├── kustomization.yaml
+# │   ├── namespace.yaml
+# │   ├── configmap.yaml
+# │   ├── secrets.yaml
+# │   ├── kafka/
+# │   ├── postgres/
+# │   ├── minio/
+# │   ├── milvus/
+# │   └── apps/
+# └── overlays/
+#     ├── dev/
+#     │   └── kustomization.yaml
+#     ├── staging/
+#     │   └── kustomization.yaml
+#     └── prod/
+#         └── kustomization.yaml
+
+---
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: image-pipeline
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secrets.yaml
+  # Infrastructure
+  - kafka/zookeeper-deployment.yaml
+  - kafka/zookeeper-service.yaml
+  - kafka/kafka-deployment.yaml
+  - kafka/kafka-service.yaml
+  - postgres/postgres-deployment.yaml
+  - postgres/postgres-service.yaml
+  - postgres/postgres-pvc.yaml
+  - minio/minio-deployment.yaml
+  - minio/minio-service.yaml
+  - minio/minio-pvc.yaml
+  - milvus/etcd-deployment.yaml
+  - milvus/etcd-service.yaml
+  - milvus/milvus-deployment.yaml
+  - milvus/milvus-service.yaml
+  - milvus/milvus-pvc.yaml
+  # Applications
+  - apps/rust-backend-deployment.yaml
+  - apps/rust-backend-service.yaml
+  - apps/model-serving-deployment.yaml
+  - apps/model-serving-service.yaml
+  - apps/triton-server-deployment.yaml
+  - apps/triton-server-service.yaml
+  # Jobs
+  - jobs/minio-init-job.yaml
+  - jobs/milvus-init-job.yaml
+  # Ingress
+  - ingress.yaml
+
+configMapGenerator:
+  - name: pipeline-config
+    literals:
+      - KAFKA_BROKER=kafka-service:9092
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres-service/imagedb
+      - MINIO_ENDPOINT=http://minio-service:9000
+      - MILVUS_HOST=milvus-service
+      - MILVUS_PORT=19530
+      - RUST_LOG=info
+
+secretGenerator:
+  - name: pipeline-secrets
+    type: Opaque
+    literals:
+      - postgres-password=postgres123
+      - minio-access-key=minioadmin
+      - minio-secret-key=minioadmin123
+
+images:
+  - name: rust-backend
+    newTag: latest
+  - name: python-producer
+    newTag: latest
+  - name: crossmodal-model-serving
+    newTag: latest
+
+commonLabels:
+  app: image-pipeline
+  environment: base
+
+---
+# k8s/overlays/dev/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: image-pipeline-dev
+
+bases:
+  - ../../base
+
+namePrefix: dev-
+nameSuffix: ""
+
+replicas:
+  - name: rust-backend
+    count: 1
+  - name: model-serving
+    count: 1
+
+patchesStrategicMerge:
+  - patches/resource-limits.yaml
+  - patches/storage-size.yaml
+  - patches/ingress-dev.yaml
+
+configMapGenerator:
+  - name: pipeline-config
+    behavior: merge
+    literals:
+      - RUST_LOG=debug
+      - ENVIRONMENT=development
+
+patches:
+  - target:
+      kind: Deployment
+      name: .*
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+
+---
+# k8s/overlays/dev/patches/resource-limits.yaml
+# Reduce resource limits for development
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  template:
+    spec:
+      containers:
+      - name: minio
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: milvus
+spec:
+  template:
+    spec:
+      containers:
+      - name: milvus
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rust-backend
+spec:
+  template:
+    spec:
+      containers:
+      - name: rust-backend
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+
+---
+
+# k8s/overlays/dev/patches/storage-size.yaml
+# Reduce storage for development
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+spec:
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+spec:
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: milvus-pvc
+spec:
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+# k8s/overlays/prod/kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: image-pipeline-prod
+
+bases:
+  - ../../base
+
+namePrefix: prod-
+nameSuffix: ""
+
+replicas:
+  - name: rust-backend
+    count: 3
+  - name: model-serving
+    count: 3
+  - name: kafka
+    count: 3
+
+patchesStrategicMerge:
+  - patches/resource-limits.yaml
+  - patches/storage-size.yaml
+  - patches/ingress-prod.yaml
+  - patches/hpa.yaml
+
+configMapGenerator:
+  - name: pipeline-config
+    behavior: merge
+    literals:
+      - RUST_LOG=warn
+      - ENVIRONMENT=production
+
+secretGenerator:
+  - name: pipeline-secrets
+    behavior: replace
+    files:
+      - secrets/postgres-password
+      - secrets/minio-access-key
+      - secrets/minio-secret-key
+
+patches:
+  - target:
+      kind: Deployment
+      name: .*
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
+
+---
+# k8s/overlays/prod/patches/resource-limits.yaml
+# Production resource limits
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  template:
+    spec:
+      containers:
+      - name: postgres
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+spec:
+  template:
+    spec:
+      containers:
+      - name: minio
+        resources:
+          requests:
+            memory: "2Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: milvus
+spec:
+  template:
+    spec:
+      containers:
+      - name: milvus
+        resources:
+          requests:
+            memory: "8Gi"
+            cpu: "4000m"
+          limits:
+            memory: "16Gi"
+            cpu: "8000m"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rust-backend
+spec:
+  template:
+    spec:
+      containers:
+      - name: rust-backend
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+
+---
+# k8s/overlays/prod/patches/hpa.yaml
+# Horizontal Pod Autoscalers for production
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rust-backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: prod-rust-backend
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: model-serving-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: prod-model-serving
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# k8s/overlays/prod/patches/ingress-prod.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pipeline-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.pipeline.production.com
+    - minio.pipeline.production.com
+    - model.pipeline.production.com
+    secretName: pipeline-tls
+  rules:
+  - host: api.pipeline.production.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prod-rust-backend-service
+            port:
+              number: 3000
+  - host: minio.pipeline.production.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prod-minio-service
+            port:
+              number: 9001
+  - host: model.pipeline.production.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prod-model-serving-service
+            port:
+              number: 8003
