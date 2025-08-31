@@ -13,16 +13,16 @@
 
 
 
-3) Setup Guide:
+# Setup Guide:
 All steps to build, configure, and run are below.
 
 
 
-1- Clone Repository
+# Clone Repository
 git clone https://github.com/Mohammed-af/image-pipeline.git
 
-2- Python Environment Setup
-# Create virtual environment
+# Python Environment Setup
+//Create virtual environment
 python3 -m venv pipeline_env
 
 # Activate environment
